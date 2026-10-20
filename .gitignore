@@ -1,0 +1,69 @@
+# Dependencies
+/vendor
+/node_modules
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Storage and cache
+/public/storage
+/storage/*.key
+/storage/logs/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/bootstrap/cache/*
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build and compilation files
+/public/build
+/public/hot
+/public/mix-manifest.json
+
+# Testing
+/coverage
+.phpunit.result.cache
+
+# Security: Keys and secrets (NEVER commit these!)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.p7b
+*.p7c
+*.p7s
+*.cer
+*.der
+
+# Database dumps
+*.sql
+*.sqlite
+*.db
+
+# Composer lock (optional: commit it for reproducibility)
+# composer.lock
+
+# Package lock (optional: commit it for reproducibility)
+# package-lock.json
+
+# Local configuration overrides
+config/local/
+
+# Custom: Secure files (permissions 600)
+# See scripts/secure-permissions.sh

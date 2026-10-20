@@ -1,0 +1,12 @@
+# Bloquer l'exécution de fichiers PHP dans ce dossier
+<FilesMatch "\.(php|php5|phtml|phar|php7|php8)$">
+    Require all denied
+</FilesMatch>
+
+# Bloquer l'accès direct aux fichiers .env, .git, etc.
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# Désactiver l'affichage du contenu du dossier
+Options -Indexes

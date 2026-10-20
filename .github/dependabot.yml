@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # Mises à jour pour les dépendances Composer (PHP)
+  - package-ecosystem: "composer"
+    directory: "/"
+    schedule:
+      interval: "daily"  # Vérifie tous les jours
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "php"
+    reviewers:
+      - "atstchamie99"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore(dev)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]  # Ignore les mises à jour majeures (breaking changes)
+
+  # Mises à jour pour les dépendances npm (JavaScript)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "atstchamie99"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore(dev)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
