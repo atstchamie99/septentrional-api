@@ -16,6 +16,7 @@ test -f "$archive"
 test -f "$backup_script"
 test -s "$app_base/shared/.env"
 
+umask 022
 mkdir -p "$app_base/releases" "$app_base/backups" \
   "$app_base/shared/storage/app/public" \
   "$app_base/shared/storage/framework/cache/data" \
@@ -23,6 +24,8 @@ mkdir -p "$app_base/releases" "$app_base/backups" \
   "$app_base/shared/storage/framework/views" \
   "$app_base/shared/storage/logs"
 app_base=$(cd "$app_base" && pwd -P)
+chmod 711 "$app_base" "$app_base/releases" "$app_base/shared"
+find "$app_base/shared/storage" -type d -exec chmod 755 {} +
 chmod 700 "$app_base/backups"
 exec 9>"$app_base/deploy.lock"
 flock -n 9 || { echo 'Another API deployment is running.' >&2; exit 1; }
@@ -37,7 +40,6 @@ fi
 rm -rf "$release"
 mkdir -p "$release" "$backup"
 chmod 700 "$backup"
-umask 022
 tar -xzf "$archive" -C "$release"
 test -f "$release/artisan"
 test -f "$release/vendor/autoload.php"

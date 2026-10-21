@@ -18,6 +18,17 @@ mkdir -p \
   "$deploy_root/septentrional-api/shared/storage/framework/views" \
   "$deploy_root/septentrional-api/shared/storage/logs"
 
+# Apache doit pouvoir traverser les parents des deux racines web. Les secrets
+# et sauvegardes conservent leurs permissions privees explicites.
+chmod 711 \
+  "$deploy_root" \
+  "$deploy_root/septentrional-front" \
+  "$deploy_root/septentrional-front/releases" \
+  "$deploy_root/septentrional-api" \
+  "$deploy_root/septentrional-api/releases" \
+  "$deploy_root/septentrional-api/shared"
+find "$deploy_root/septentrional-api/shared/storage" -type d -exec chmod 755 {} +
+
 curl -fsSL "$script_url" -o "$state_root/pull.sh"
 chmod 700 "$state_root" "$state_root/pull.sh" "$deploy_root/septentrional-api/backups"
 
