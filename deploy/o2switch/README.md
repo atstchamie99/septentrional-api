@@ -23,10 +23,12 @@ Le premier lancement doit reussir avant d'activer le cron.
 
 ## Cron cPanel
 
-Frequence : une fois par minute (`* * * * *`).
+Frequence : une fois par minute (`* * * * *`). Les deux cibles utilisent des
+verrous separes et produisent des journaux separes.
 
 ```bash
-/bin/bash /home/nopr7308/.septentrional-deploy/pull.sh >> /home/nopr7308/.septentrional-deploy/deploy.log 2>&1
+DEPLOY_TARGET=frontend /bin/bash /home/nopr7308/.septentrional-deploy/pull.sh >> /home/nopr7308/.septentrional-deploy/frontend.log 2>&1
+DEPLOY_TARGET=api /bin/bash /home/nopr7308/.septentrional-deploy/pull.sh >> /home/nopr7308/.septentrional-deploy/api.log 2>&1
 ```
 
 Les sous-domaines doivent pointer vers :

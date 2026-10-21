@@ -9,6 +9,7 @@ state_root=${STATE_ROOT:-$HOME/.septentrional-deploy}
 front_repo=${FRONT_REPO_DIR:-$HOME/repos/septentrional-front}
 api_repo=${API_REPO_DIR:-$HOME/repos/septentrional-api}
 php_bin=${PHP_BIN:-}
+deploy_target=${DEPLOY_TARGET:-all}
 if [[ -z "$php_bin" ]]; then
   if [[ -x /opt/alt/php84/usr/bin/php ]]; then
     php_bin=/opt/alt/php84/usr/bin/php
@@ -22,7 +23,11 @@ fi
 umask 077
 mkdir -p "$state_root"
 chmod 700 "$state_root"
-exec 8>"$state_root/pull.lock"
+case "$deploy_target" in
+  all|frontend|api) ;;
+  *) echo "Unknown DEPLOY_TARGET: $deploy_target" >&2; exit 2 ;;
+esac
+exec 8>"$state_root/pull-$deploy_target.lock"
 flock -n 8 || exit 0
 
 deploy_release() {
@@ -88,8 +93,12 @@ deploy_release() {
 }
 
 status=0
-deploy_release frontend "$front_repo" "$deploy_root/septentrional-front" \
-  'https://front.septentrional.tg/' frontend || status=1
-deploy_release api "$api_repo" "$deploy_root/septentrional-api" \
-  'https://api.septentrional.tg/api/v2/health' api || status=1
+if [[ "$deploy_target" == all || "$deploy_target" == frontend ]]; then
+  deploy_release frontend "$front_repo" "$deploy_root/septentrional-front" \
+    'https://front.septentrional.tg/' frontend || status=1
+fi
+if [[ "$deploy_target" == all || "$deploy_target" == api ]]; then
+  deploy_release api "$api_repo" "$deploy_root/septentrional-api" \
+    'https://api.septentrional.tg/api/v2/health' api || status=1
+fi
 exit "$status"
