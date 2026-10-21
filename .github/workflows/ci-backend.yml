@@ -1,4 +1,4 @@
-name: Vérifier l'API
+name: Tester et publier l'API live
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: api-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   laravel:
@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Récupérer le dépôt
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Installer PHP 8.4
         uses: shivammathur/setup-php@v2
@@ -58,3 +60,59 @@ jobs:
 
       - name: Exécuter les tests
         run: php artisan test
+
+      - name: Construire le paquet live
+        if: github.ref == 'refs/heads/live' && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+          composer check-platform-reqs --no-dev
+          rm -f bootstrap/cache/*.php
+          tar --exclude=public/storage --exclude=public/hot \
+            --exclude='database/*.sqlite*' --exclude=storage/logs \
+            --exclude=storage/framework --exclude=.env \
+            -czf "$RUNNER_TEMP/release.tar.gz" \
+            app bootstrap config database lang public resources routes vendor \
+            artisan composer.json composer.lock
+          cp scripts/deploy/server.sh scripts/deploy/backup-database.php "$RUNNER_TEMP/"
+
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/live' && github.event_name != 'pull_request'
+        with:
+          name: api-live-release
+          path: |
+            ${{ runner.temp }}/release.tar.gz
+            ${{ runner.temp }}/server.sh
+            ${{ runner.temp }}/backup-database.php
+          retention-days: 7
+
+  publish:
+    name: Publier le paquet valide
+    needs: laravel
+    if: github.ref == 'refs/heads/live' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-live-release
+          path: release
+      - uses: actions/checkout@v4
+        with:
+          ref: live
+          path: source
+      - name: Publier la branche technique live-build
+        run: |
+          set -euo pipefail
+          cd source
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || exit 0
+          git switch --orphan live-build
+          cp ../release/release.tar.gz ../release/server.sh ../release/backup-database.php .
+          printf '%s\n' "$GITHUB_SHA" > revision
+          sha256sum release.tar.gz > SHA256SUMS
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add release.tar.gz server.sh backup-database.php revision SHA256SUMS
+          git commit -m "Tested API live release $GITHUB_SHA"
+          git push --force origin HEAD:live-build
