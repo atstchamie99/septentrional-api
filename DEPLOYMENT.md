@@ -14,12 +14,11 @@ Créer un environnement GitHub nommé `live`, puis y définir :
 
 ### Variables
 
-- `DEPLOY_HOST` : `hathor.o2switch.net` ;
-- `DEPLOY_PORT` : `22` ;
 - `DEPLOY_USER` : utilisateur cPanel/o2switch ;
-- `DEPLOY_BASE_PATH` : `/home/UTILISATEUR/apps/septentrional-api` ;
 - `PHP_BIN` : chemin de PHP 8.3 ou 8.4 sur o2switch, sinon `php` ;
 - `COMPOSER_BIN` : chemin de Composer, sinon `composer`.
+
+L'hôte, le port et le chemin de déploiement sont déjà définis dans le workflow.
 
 Dans cPanel, la racine de `api.septentrional.tg` doit être :
 
