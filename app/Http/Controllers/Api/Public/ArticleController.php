@@ -69,7 +69,8 @@ class ArticleController extends Controller
 
     public function archivesMois()
     {
-        return Cache::remember('v1:articles:archives-mois', 300, function () {
+        // Cache only data: persistent stores may refuse to unserialize HTTP responses.
+        $archives = Cache::remember('v2:articles:archives-mois', 300, function () {
             $moisFrancais = [
                 1 => 'Janvier', 2 => 'Février', 3 => 'Mars', 4 => 'Avril',
                 5 => 'Mai', 6 => 'Juin', 7 => 'Juillet', 8 => 'Août',
@@ -114,11 +115,13 @@ class ArticleController extends Controller
             // Ordre chronologique : du plus ancien au plus récent
             $resultats = array_reverse($resultats);
 
-            return response()->json([
-                'success' => true,
-                'data'    => $resultats,
-            ]);
+            return $resultats;
         });
+
+        return response()->json([
+            'success' => true,
+            'data' => $archives,
+        ]);
     }
 
     public function show(string $slug)
