@@ -67,7 +67,7 @@ class EmailOtpAuthenticationTest extends TestCase
         ]);
         $ticket = $user->id.'.'.str_repeat('a', 64);
         Cache::put('2fa:reauth:user:'.$user->id, hash('sha256', $ticket), 600);
-        $this->withUnencryptedCookie('otp_reauth', $ticket);
+        $this->withCredentials()->withUnencryptedCookie('otp_reauth', $ticket);
         $challenge = $this->postJson('/api/v2/reauth/send-email-otp')->assertOk()->json();
         $code = Mail::sent(EmailOtpMail::class)->sole()->code;
 

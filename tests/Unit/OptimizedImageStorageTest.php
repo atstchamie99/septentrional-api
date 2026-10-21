@@ -3,12 +3,15 @@
 namespace Tests\Unit;
 
 use App\Services\OptimizedImageStorage;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class OptimizedImageStorageTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_it_resizes_and_converts_uploaded_images_to_webp(): void
     {
         Storage::fake('public');
