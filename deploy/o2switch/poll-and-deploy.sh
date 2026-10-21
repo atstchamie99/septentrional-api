@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run from a private directory outside both document roots.
 set -Eeuo pipefail
+trap 'code=$?; echo "Deployment stopped (exit $code, line $LINENO)." >&2; exit "$code"' ERR
 
 export PATH="/usr/local/cpanel/3rdparty/lib/path-bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
@@ -42,11 +43,23 @@ deploy_release() {
   mkdir -p "$app_state"
   chmod 700 "$app_state"
 
-  git -C "$repo_dir" fetch --quiet --depth=1 origin \
-    +refs/heads/live-build:refs/remotes/origin/live-build
-  release=$(git -C "$repo_dir" rev-parse refs/remotes/origin/live-build)
-  revision=$(git -C "$repo_dir" show "$release:revision")
-  [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+  if ! git -C "$repo_dir" fetch --quiet --depth=1 origin \
+    +refs/heads/live-build:refs/remotes/origin/live-build; then
+    echo "$name: live-build is not available yet." >&2
+    return 1
+  fi
+  if ! release=$(git -C "$repo_dir" rev-parse --verify refs/remotes/origin/live-build); then
+    echo "$name: unable to resolve live-build." >&2
+    return 1
+  fi
+  if ! revision=$(git -C "$repo_dir" show "$release:revision"); then
+    echo "$name: live-build does not contain a revision." >&2
+    return 1
+  fi
+  if [[ ! "$revision" =~ ^[a-f0-9]{40}$ ]]; then
+    echo "$name: invalid live-build revision." >&2
+    return 1
+  fi
 
   if [[ -f "$app_state/current-revision" ]] \
     && [[ "$(<"$app_state/current-revision")" == "$revision" ]]; then
@@ -61,15 +74,27 @@ deploy_release() {
   work_dir=$(mktemp -d "$app_state/release.XXXXXX")
   if [[ "$kind" == api ]]; then
     for file in release.tar.gz server.sh backup-database.php SHA256SUMS; do
-      git -C "$repo_dir" show "$release:$file" > "$work_dir/$file"
+      if ! git -C "$repo_dir" show "$release:$file" > "$work_dir/$file"; then
+        echo "$name: live-build is missing $file." >&2
+        rm -rf "$work_dir"
+        return 1
+      fi
     done
   else
     for file in release.tar.gz server.sh SHA256SUMS; do
-      git -C "$repo_dir" show "$release:$file" > "$work_dir/$file"
+      if ! git -C "$repo_dir" show "$release:$file" > "$work_dir/$file"; then
+        echo "$name: live-build is missing $file." >&2
+        rm -rf "$work_dir"
+        return 1
+      fi
     done
   fi
 
-  (cd "$work_dir" && sha256sum --check SHA256SUMS)
+  if ! (cd "$work_dir" && sha256sum --check SHA256SUMS); then
+    echo "$name: live-build checksum verification failed." >&2
+    rm -rf "$work_dir"
+    return 1
+  fi
   echo "$(date -u +%FT%TZ) Deploying $name $revision"
 
   if [[ "$kind" == api ]]; then
@@ -92,13 +117,13 @@ deploy_release() {
   echo "$(date -u +%FT%TZ) Deployment complete: $name $revision"
 }
 
-status=0
+# Do not call deploy_release in an ||/if condition: Bash would disable
+# errexit throughout the function and could record a failed fetch as success.
 if [[ "$deploy_target" == all || "$deploy_target" == frontend ]]; then
   deploy_release frontend "$front_repo" "$deploy_root/septentrional-front" \
-    'https://front.septentrional.tg/' frontend || status=1
+    'https://front.septentrional.tg/' frontend
 fi
 if [[ "$deploy_target" == all || "$deploy_target" == api ]]; then
   deploy_release api "$api_repo" "$deploy_root/septentrional-api" \
-    'https://api.septentrional.tg/api/v2/health' api || status=1
+    'https://api.septentrional.tg/api/v2/health' api
 fi
-exit "$status"
