@@ -1,23 +1,18 @@
-name: Vérification Backend Septentrional
+name: Vérifier et déployer l'API
 
 on:
   push:
-    branches:
-      - dev
-      - production
-
+    branches: [dev, live]
   pull_request:
-    branches:
-      - production
-
+    branches: [live]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: backend-${{ github.ref }}
-  cancel-in-progress: true
+  group: api-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/live' }}
 
 jobs:
   laravel:
@@ -36,65 +31,207 @@ jobs:
           extensions: mbstring, dom, fileinfo, pdo_sqlite, sqlite3, pdo_mysql
           coverage: none
 
-      - name: Vérifier les versions
-        run: |
-          php -v
-          composer --version
-
       - name: Installer les dépendances
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Créer l'environnement de test
         run: |
-          composer install \
-            --prefer-dist \
-            --no-interaction \
-            --no-progress
+          cp .env.example .env
+          sed -i \
+            -e 's/^APP_ENV=.*/APP_ENV=testing/' \
+            -e 's/^APP_DEBUG=.*/APP_DEBUG=true/' \
+            -e 's/^DB_CONNECTION=.*/DB_CONNECTION=sqlite/' \
+            -e 's/^DB_DATABASE=.*/DB_DATABASE=:memory:/' \
+            -e 's/^CACHE_STORE=.*/CACHE_STORE=array/' \
+            -e 's/^SESSION_DRIVER=.*/SESSION_DRIVER=array/' \
+            -e 's/^QUEUE_CONNECTION=.*/QUEUE_CONNECTION=sync/' \
+            -e 's/^MAIL_MAILER=.*/MAIL_MAILER=array/' \
+            .env
+          php artisan key:generate --force
 
-      - name: Créer un environnement de test
+      - name: Vérifier la configuration et les migrations
         run: |
-          cat > .env <<EOF
-          APP_NAME="Septentrional API"
-          APP_ENV=testing
-          APP_KEY=
-          APP_DEBUG=true
-          APP_URL=http://localhost
-
-          LOG_CHANNEL=stack
-          LOG_LEVEL=debug
-
-          DB_CONNECTION=sqlite
-          DB_DATABASE=database/database.sqlite
-
-          CACHE_STORE=array
-          SESSION_DRIVER=array
-          QUEUE_CONNECTION=sync
-
-          FILESYSTEM_DISK=local
-
-          MAIL_MAILER=array
-          BROADCAST_CONNECTION=log
-          EOF
-
-      - name: Préparer SQLite
-        run: |
-          mkdir -p database
-          touch database/database.sqlite
-
-      - name: Générer la clé Laravel
-        run: php artisan key:generate --force
-
-      - name: Nettoyer les caches
-        run: php artisan optimize:clear
-
-      - name: Vérifier Laravel
-        run: php artisan about
-
-      - name: Exécuter les migrations
-        run: php artisan migrate --force
-
-      - name: Vérifier les routes
-        run: php artisan route:list
-
-      - name: Vérifier la configuration
-        run: php artisan config:cache
+          composer validate --strict --no-check-publish
+          composer check:env-example
+          php artisan migrate --force
+          php artisan route:list
 
       - name: Exécuter les tests
         run: php artisan test
+
+  deploy:
+    name: Déployer l'API live
+    if: github.event_name == 'push' && github.ref == 'refs/heads/live'
+    needs: laravel
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: live
+      url: https://api.septentrional.tg/api/v2/health
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_BASE_PATH: ${{ vars.DEPLOY_BASE_PATH }}
+      PHP_BIN: ${{ vars.PHP_BIN || 'php' }}
+      COMPOSER_BIN: ${{ vars.COMPOSER_BIN || 'composer' }}
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Vérifier la configuration de déploiement
+        run: |
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] || exit 1
+          [[ "$DEPLOY_BASE_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || exit 1
+          [[ "$PHP_BIN" =~ ^[A-Za-z0-9._/-]+$ ]] || exit 1
+          [[ "$COMPOSER_BIN" =~ ^[A-Za-z0-9._/-]+$ ]] || exit 1
+
+      - name: Configurer la clé SSH
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEPLOY_SSH_PRIVATE_KEY" || exit 1
+          test -n "$DEPLOY_SSH_KNOWN_HOSTS" || exit 1
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Lire la release active
+        id: release
+        run: |
+          previous="$({
+            ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- \
+              "$DEPLOY_BASE_PATH" <<'REMOTE'
+          base="$1"
+          if [[ -L "$base/current" ]]; then
+            readlink -f "$base/current"
+          fi
+          REMOTE
+          } 2>/dev/null)"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+
+      - name: Préparer la release distante
+        run: |
+          ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- \
+            "$DEPLOY_BASE_PATH" "$GITHUB_SHA" <<'REMOTE'
+          set -Eeuo pipefail
+          base="$1"
+          release="$base/releases/$2"
+          mkdir -p "$release" \
+            "$base/shared/storage/app/public" \
+            "$base/shared/storage/framework/cache/data" \
+            "$base/shared/storage/framework/sessions" \
+            "$base/shared/storage/framework/views" \
+            "$base/shared/storage/logs"
+          test -f "$base/shared/.env" || {
+            echo "Fichier absent: $base/shared/.env" >&2
+            exit 1
+          }
+          REMOTE
+
+      - name: Envoyer le code de l'API
+        run: |
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='tests/' \
+            --exclude='vendor/' \
+            --exclude='node_modules/' \
+            --exclude='storage/' \
+            --exclude='bootstrap/cache/*.php' \
+            --exclude='public/storage' \
+            -e "ssh -p $DEPLOY_PORT -o BatchMode=yes -o IdentitiesOnly=yes" \
+            ./ \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_BASE_PATH/releases/$GITHUB_SHA/"
+
+      - name: Installer et activer la release
+        run: |
+          ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- \
+            "$DEPLOY_BASE_PATH" "$GITHUB_SHA" "$PHP_BIN" "$COMPOSER_BIN" <<'REMOTE'
+          set -Eeuo pipefail
+          base="$1"
+          release="$base/releases/$2"
+          php_bin="$3"
+          composer_bin="$4"
+          previous=""
+
+          if [[ -L "$base/current" ]]; then
+            previous="$(readlink -f "$base/current")"
+          fi
+
+          restore_previous() {
+            if [[ -n "$previous" && -d "$previous" ]]; then
+              ln -sfn "$previous" "$base/current.next"
+              mv -Tf "$base/current.next" "$base/current"
+              cd "$previous"
+              "$php_bin" artisan up || true
+            fi
+          }
+
+          trap 'status=$?; if [[ $status -ne 0 ]]; then restore_previous; fi; exit $status' EXIT
+
+          if [[ -n "$previous" && -f "$previous/artisan" ]]; then
+            cd "$previous"
+            "$php_bin" artisan down --retry=60 || true
+          fi
+
+          ln -sfn "$base/shared/.env" "$release/.env"
+          ln -sfn "$base/shared/storage" "$release/storage"
+          chmod -R u+rwX "$base/shared/storage" "$release/bootstrap/cache"
+
+          cd "$release"
+          "$composer_bin" install \
+            --no-dev --prefer-dist --no-interaction --no-progress \
+            --optimize-autoloader
+          "$php_bin" artisan optimize:clear
+          "$php_bin" artisan migrate --force
+          "$php_bin" artisan storage:link || true
+          "$php_bin" artisan config:cache
+          "$php_bin" artisan view:cache
+
+          ln -sfn "$release" "$base/current.next"
+          mv -Tf "$base/current.next" "$base/current"
+
+          "$php_bin" artisan queue:restart || true
+          "$php_bin" artisan up
+          trap - EXIT
+          REMOTE
+
+      - name: Vérifier l'API
+        run: |
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors \
+            https://api.septentrional.tg/api/v2/health
+
+      - name: Restaurer le code précédent en cas d'échec
+        if: ${{ failure() && steps.release.outputs.previous != '' }}
+        env:
+          PREVIOUS_RELEASE: ${{ steps.release.outputs.previous }}
+        run: |
+          ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- \
+            "$DEPLOY_BASE_PATH" "$PREVIOUS_RELEASE" "$PHP_BIN" <<'REMOTE'
+          set -Eeuo pipefail
+          base="$1"
+          previous="$2"
+          php_bin="$3"
+          case "$previous" in
+            "$base"/releases/*) ;;
+            *) exit 1 ;;
+          esac
+          test -f "$previous/artisan"
+          ln -sfn "$previous" "$base/current.next"
+          mv -Tf "$base/current.next" "$base/current"
+          cd "$previous"
+          "$php_bin" artisan up || true
+          REMOTE

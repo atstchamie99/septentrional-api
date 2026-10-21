@@ -1,0 +1,76 @@
+name: Restaurer l'API live
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: SHA Git complet de la release à restaurer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-refs/heads/live
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: live
+      url: https://api.septentrional.tg/api/v2/health
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_BASE_PATH: ${{ vars.DEPLOY_BASE_PATH }}
+      PHP_BIN: ${{ vars.PHP_BIN || 'php' }}
+      RELEASE: ${{ inputs.release }}
+
+    steps:
+      - name: Valider les paramètres
+        run: |
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] || exit 1
+          [[ "$DEPLOY_BASE_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || exit 1
+          [[ "$PHP_BIN" =~ ^[A-Za-z0-9._/-]+$ ]] || exit 1
+
+      - name: Configurer la clé SSH
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEPLOY_SSH_PRIVATE_KEY" || exit 1
+          test -n "$DEPLOY_SSH_KNOWN_HOSTS" || exit 1
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Restaurer la release demandée
+        run: |
+          ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- \
+            "$DEPLOY_BASE_PATH" "$RELEASE" "$PHP_BIN" <<'REMOTE'
+          set -Eeuo pipefail
+          base="$1"
+          release="$base/releases/$2"
+          php_bin="$3"
+          test -f "$release/artisan"
+          ln -sfn "$release" "$base/current.next"
+          mv -Tf "$base/current.next" "$base/current"
+          cd "$release"
+          "$php_bin" artisan up || true
+          "$php_bin" artisan queue:restart || true
+          REMOTE
+
+      - name: Vérifier l'API restaurée
+        run: |
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors \
+            https://api.septentrional.tg/api/v2/health
